@@ -1,0 +1,47 @@
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Function to check if a user has the 'admin' role in their user document.
+    function isAdmin() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Rules for user profile documents
+    match /users/{userId} {
+      // Admins can read all user profiles.
+      // Users can only read their own profile.
+      allow read: if isAdmin() || request.auth.uid == userId;
+      
+      // Users can only write/update their own document.
+      // The `isAdmin()` check for writes is handled by secure backend functions, not client-side rules.
+      // This rule prevents a user from changing their own role on the client.
+      allow write: if request.auth.uid == userId && request.resource.data.role == resource.data.role;
+
+      // Allow admins to list users for the admin panel.
+      allow list: if isAdmin();
+    }
+
+    // Rules for scan reports
+    match /scanReports/{reportId} {
+      // Allow creation if the report's userId matches the authenticated user's ID
+      allow create: if request.auth.uid == request.resource.data.userId;
+
+      // Users can read/delete their own reports. Admins can read/delete any report.
+      allow read, delete: if request.auth.uid == resource.data.userId || isAdmin();
+      
+      // Admins can list all reports.
+      allow list: if isAdmin();
+    }
+    
+    // Rules for global settings
+    match /settings/global {
+      // Any authenticated user can read the settings (e.g., for maintenance mode check).
+      allow read: if request.auth != null;
+      // Only admins can write/update the settings (via backend or admin panel).
+      allow write: if isAdmin();
+    }
+  }
+}
