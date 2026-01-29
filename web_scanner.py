@@ -270,7 +270,7 @@ def main():
     
     import argparse
     parser = argparse.ArgumentParser(description="NeuroShield Malware Scanner Web Interface")
-    parser.add_argument("--host", default="127.0.0.1", help="Host to bind to")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--port", type=int, default=None, help="Port to bind to")
     parser.add_argument("--model", default="xgboost_model.pkl", help="Model file")
     parser.add_argument("--scaler", default="scaler.pkl", help="Scaler file")
