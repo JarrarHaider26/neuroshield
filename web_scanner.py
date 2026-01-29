@@ -227,37 +227,15 @@ def scan_file():
         result = scanner.scan(temp_path)
         
         # Clean up
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
+        os.unlink(temp_path)
         
-        try:
-            return jsonify(result)
-        except TypeError as e:
-            # Fallback for JSON serialization errors (e.g. numpy types)
-            import json
-            class NumpyEncoder(json.JSONEncoder):
-                def default(self, obj):
-                    if hasattr(obj, 'tolist'):
-                        return obj.tolist()
-                    if hasattr(obj, 'item'):
-                        return obj.item()
-                    return super().default(obj)
-            
-            return app.response_class(
-                response=json.dumps(result, cls=NumpyEncoder),
-                status=200,
-                mimetype='application/json'
-            )
-            
+        return jsonify(result)
+        
     except Exception as e:
         # Clean up on error
         if os.path.exists(temp_path):
             os.unlink(temp_path)
-        
-        # Log the full error
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": f"Internal Server Error: {str(e)}"}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/health')
 def health():
@@ -285,36 +263,48 @@ def test():
         "scanner_ready": scanner is not None
     })
 
+# Round-robin key rotation state
+_key_index = 0
+_key_lock = None
+
+def get_lock():
+    """Get or create thread lock for key rotation."""
+    global _key_lock
+    if _key_lock is None:
+        import threading
+        _key_lock = threading.Lock()
+    return _key_lock
+
+def get_next_api_key(api_keys):
+    """Get next API key using round-robin rotation."""
+    global _key_index
+    with get_lock():
+        key = api_keys[_key_index % len(api_keys)].strip()
+        _key_index += 1
+        return key
+
 @app.route('/scan-url', methods=['POST'])
 def scan_url():
-    """
-    Proxy endpoint for VirusTotal URL scanning.
-    Keeps API keys secure on the server side.
-    """
+    """Proxy endpoint for VirusTotal URL scanning with round-robin key rotation."""
     import time
     import requests
     
-    # Get VirusTotal API keys from environment variables
     vt_api_keys = os.environ.get('VIRUSTOTAL_API_KEYS', '').split(',')
     if not vt_api_keys or vt_api_keys[0] == '':
         return jsonify({"error": "VirusTotal API keys not configured"}), 500
     
-    # Get URL from request
     data = request.get_json()
     if not data or 'url' not in data:
         return jsonify({"error": "No URL provided"}), 400
     
     url_to_scan = data['url']
     
-    # Validate URL
     if not url_to_scan.startswith('http://') and not url_to_scan.startswith('https://'):
         return jsonify({"error": "Invalid URL format"}), 400
     
-    # Use first available API key (you can implement rotation logic here)
-    api_key = vt_api_keys[0].strip()
+    api_key = get_next_api_key(vt_api_keys)
     
     try:
-        # Submit URL to VirusTotal
         submit_response = requests.post(
             'https://www.virustotal.com/api/v3/urls',
             headers={'x-apikey': api_key, 'Content-Type': 'application/x-www-form-urlencoded'},
@@ -333,7 +323,6 @@ def scan_url():
         if not analysis_id:
             return jsonify({"error": "Failed to submit URL for analysis"}), 500
         
-        # Poll for results (max 10 attempts, 2 seconds apart)
         max_attempts = 10
         for attempt in range(max_attempts):
             time.sleep(2)
@@ -360,7 +349,6 @@ def scan_url():
                     "total": sum(stats.values())
                 })
         
-        # Timeout - analysis not completed
         return jsonify({"error": "Analysis timeout - try again later"}), 408
         
     except requests.exceptions.Timeout:
@@ -377,12 +365,15 @@ def main():
     
     import argparse
     parser = argparse.ArgumentParser(description="NeuroShield Malware Scanner Web Interface")
-    parser.add_argument("--host", default="127.0.0.1", help="Host to bind to")
-    parser.add_argument("--port", type=int, default=5000, help="Port to bind to")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
+    parser.add_argument("--port", type=int, default=None, help="Port to bind to")
     parser.add_argument("--model", default="xgboost_model.pkl", help="Model file")
     parser.add_argument("--scaler", default="scaler.pkl", help="Scaler file")
     
     args = parser.parse_args()
+    
+    # Use PORT from environment (Render) or command line arg or default
+    port = args.port or int(os.environ.get('PORT', 5000))
     
     print("=" * 50)
     print("NeuroShield Malware Scanner - Web Interface")
@@ -393,10 +384,10 @@ def main():
     scanner = MalwareScanner(args.model, args.scaler)
     print(f"Scanner ready! Features: {len(scanner.feature_names)}")
     
-    print(f"\n🌐 Open your browser to: http://{args.host}:{args.port}")
+    print(f"\n🌐 Server starting on: http://{args.host}:{port}")
     print("Press Ctrl+C to stop\n")
     
-    app.run(host=args.host, port=args.port, debug=False)
+    app.run(host=args.host, port=port, debug=False)
 
 
 if __name__ == '__main__':
