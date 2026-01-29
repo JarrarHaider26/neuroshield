@@ -292,7 +292,7 @@ def main():
     print(f"\n🌐 Server starting on: http://{args.host}:{port}")
     print("Press Ctrl+C to stop\n")
     
-    app.run(host=args.host, port=port, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
 
 
 if __name__ == '__main__':
